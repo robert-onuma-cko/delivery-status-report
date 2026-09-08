@@ -1,0 +1,12 @@
+# secrets
+.env
+
+# local data snapshots (reports/ is tracked on purpose)
+data/
+
+# python
+__pycache__/
+*.pyc
+
+# legacy Zapier script that still contains hard-coded credentials - keep it local only
+weekly_portfolio_report.py

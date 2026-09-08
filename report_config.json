@@ -1,0 +1,26 @@
+{
+  "jira": {
+    "base_url": "https://checkout.atlassian.net",
+    "jql": "project = CHANGE_ME AND statusCategory != Done ORDER BY created ASC",
+    "page_size": 100,
+    "fields": {
+      "summary": "summary",
+      "strategic_initiative": "customfield_CHANGE_ME",
+      "product_group": "customfield_CHANGE_ME",
+      "delivery_comment": "customfield_15976",
+      "delivery_rag": "customfield_15930"
+    }
+  },
+  "report": {
+    "title": "",
+    "link_items_to_jira": true
+  },
+  "email": {
+    "subject": "{title}",
+    "to": ["robert.onuma@checkout.com"],
+    "cc": []
+  },
+  "git": {
+    "branch": "claude/weekly-reports"
+  }
+}
