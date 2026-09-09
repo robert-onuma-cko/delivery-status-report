@@ -4,7 +4,12 @@ Pull the work items for the Delivery Status Report straight from Jira.
 
 Produces the same five lists the Zapier step receives (summary,
 strategic_initiatives, product_group, delivery_comment, delivery_rag) plus the
-issue keys and browse URLs, so the report can be generated without Zapier.
+issue keys, last-updated timestamps and browse URLs, so the report can be
+generated without Zapier.
+
+Links: the REST API only returns machine "self" links
+(https://.../rest/api/3/issue/12345), so the human link is built from the site
+URL and the issue key instead (https://checkout.atlassian.net/browse/KEY).
 
 Usage
     python fetch_jira_items.py                      # writes data/latest_input.json
@@ -202,13 +207,15 @@ def fetch_items(config, email, token, jql_override=None):
     validate_jira_config(jira_cfg)
 
     fields = jira_cfg["fields"]
+    updated_field = fields.get("updated") or "updated"          # Jira's built-in last-updated stamp
     client = JiraClient(jira_cfg["base_url"], email, token)
-    wanted = list(dict.fromkeys(fields.values()))      # unique field ids, order preserved
+    wanted = list(dict.fromkeys(list(fields.values()) + [updated_field]))   # unique ids, order kept
     browse = jira_cfg["base_url"].rstrip("/") + "/browse/"
 
     result = {key: [] for key in OUTPUT_KEYS}
     result["keys"] = []
     result["urls"] = []
+    result["updated"] = []
     for issue in client.search(jira_cfg["jql"], wanted, int(jira_cfg.get("page_size", 100))):
         values = issue.get("fields") or {}
         key = issue.get("key", "")
@@ -219,6 +226,7 @@ def fetch_items(config, email, token, jql_override=None):
         result["product_group"].append(field_to_list(values.get(fields["product_group"])))
         result["delivery_comment"].append(field_to_text(values.get(fields["delivery_comment"])))
         result["delivery_rag"].append(field_to_text(values.get(fields["delivery_rag"])))
+        result["updated"].append(values.get(updated_field))      # e.g. 2026-09-08T14:03:11.000+0100
 
     result["meta"] = {
         "source": "jira",

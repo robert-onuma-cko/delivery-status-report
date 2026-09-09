@@ -31,7 +31,7 @@ You are the weekly Delivery Status Report job. The repository is already checked
 
 2. Read its output. The final line is either `STATUS: OK` or `STATUS: FAILED (...)`.
 
-3. If the status is OK, reply with a short summary: the report title, the item count, the RAG line printed by the script, and the git branch it was pushed to. Then stop.
+3. If the status is OK, reply with a short summary: the report title, the item count, the RAG and Changes lines printed by the script, and the git branch it was pushed to. Then stop.
 
 4. If the status is FAILED and the reason looks transient (timeout, connection reset, HTTP 5xx, rate limit), run the same command one more time. Otherwise, or if the retry also fails, reply with the exact error lines from the output so a person can fix the configuration. Do not try to fix anything yourself.
 

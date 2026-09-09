@@ -33,8 +33,9 @@ python run_weekly_report.py --source sample
 ```
 
 That writes `reports/<today>/delivery-status-report.html` (open it in a browser), the Markdown twin,
-`summary.json`, `input.json`, and refreshes `reports/latest.*`. Add `--email` once `.env` has SMTP
-settings, and `--commit` to push the files to git.
+`summary.json`, `input.json`, and refreshes `reports/latest.*` plus `reports/latest_input.json` (the
+snapshot the next run compares against; sample runs skip that comparison). Add `--email` once `.env` has
+SMTP settings, and `--commit` to push the files to git.
 
 Run the Zapier-path tests with `python test_delivery_status_report.py`.
 
@@ -59,7 +60,29 @@ Run the Zapier-path tests with `python test_delivery_status_report.py`.
 
 Field handling: select lists → their value, multi-selects → a list (an item with two product groups
 is listed under both), rich-text comments → plain text, empty → "No update provided" / "No RAG".
-Item names link back to the Jira issue unless `report.link_items_to_jira` is `false`.
+Jira's built-in `updated` timestamp is fetched as well (`jira.fields.updated`) and drives the
+"Last updated" line. Item names link to `https://checkout.atlassian.net/browse/KEY` – built from the
+issue key, because the REST API only returns machine `self` links – unless `report.link_items_to_jira`
+is `false`.
+
+## How items are ordered and highlighted
+
+Within each product group:
+
+- **Most urgent first** – items are sorted by RAG: Off track, At risk / Spillover, On track, Planned,
+  No RAG, Done, Dropped.
+- **Unchanged items last, greyed out** – an item is unchanged when its delivery comment and RAG are
+  identical to the previous report. The runner keeps last week's items in `reports/latest_input.json`
+  on the report branch and compares against it; items that were not in the previous report get a
+  **NEW** tag. Without a snapshot (first run, or the Zapier path) an item counts as unchanged when
+  Jira's `updated` stamp is 7 or more days old.
+- **Last updated** – every item shows "Last updated 3 days ago (6 Sep 2026)". It turns red once the
+  item has not been updated for more than 14 days.
+
+The header sums it up ("Since the previous report (2 Sep 2026): 🆕 3 new · ✏️ 20 updated · ⏸ 12 unchanged ·
+⚠ 6 not updated for 14+ days") and the overview table gains "No change" and "14+ days" columns. The
+thresholds are the `STALE_AFTER_DAYS` and `UNCHANGED_AFTER_DAYS` constants at the top of
+`delivery_status_report.py`; `--no-previous` skips the snapshot comparison for one run.
 
 ## Configure email
 
@@ -87,16 +110,22 @@ sandbox, runs the one command above, and reports the `STATUS` line. For it to wo
    host. If the run fails with "Could not reach", widen the environment's network settings.
 4. **Branch** – reports are committed to `claude/weekly-reports` (branches prefixed `claude/` are the ones
    cloud sessions may push to). Change it via `git.branch` in `report_config.json` or `REPORT_GIT_BRANCH`.
-   Each week adds `reports/<date>/` and refreshes `reports/latest.*`, so the branch is the archive.
+   Each week adds `reports/<date>/` and refreshes `reports/latest.*` and `reports/latest_input.json`
+   (the snapshot the next run compares against), so the branch is the archive.
 5. Manage or run the routine at <https://claude.ai/code/routines>.
 
 ## Zapier step (unchanged)
 
 Paste `delivery_status_report.py` into a *Code by Zapier → Run Python* step. Map the inputs
 `summary`, `strategic_initiatives`, `product_group`, `delivery_comment`, `delivery_rag` (each a JSON
-array string; Python-style lists and comma-joined line items also work). Optional inputs: `title`, `urls`.
+array string; Python-style lists and comma-joined line items also work). Optional inputs: `title`,
+`keys` (issue keys – item names become links), `urls` (REST `self` links and `undefined` values are
+replaced by the `/browse/KEY` link), `updated` (Jira "updated" stamps – the "Last updated" line, red after
+14 days, greyed out after 7 days without a change), `previous` (last week's lists as JSON, e.g. from
+Storage by Zapier, for exact change detection) and `as_of`.
 Outputs: `title` → Google Docs *Document Name*, `report_html` → *Document Content*, plus
-`report_markdown`, `rag_summary`, counts and `warnings`.
+`report_markdown`, `rag_summary`, `changes_summary`, counts (`item_count`, `new_count`,
+`unchanged_count`, `stale_count`, ...) and `warnings`.
 
 ## Troubleshooting
 
@@ -110,3 +139,5 @@ Outputs: `title` → Google Docs *Document Name*, `report_html` → *Document Co
 | `SMTP login failed` | Wrong password / app password, or SMTP AUTH disabled for the mailbox. |
 | `git push ... failed` | The sandbox may only push to `claude/*` branches; check the branch name and repo permissions. |
 | `STATUS: FAILED (no items)` | The JQL returned nothing this week. |
+| Everything is greyed out | Nothing changed since the snapshot, or the same input was run twice. Run with `--no-previous` to compare by last-updated date instead. |
+| `'updated' values could not be read as a date` | `jira.fields.updated` does not point at a date field; use Jira's built-in `updated`. |

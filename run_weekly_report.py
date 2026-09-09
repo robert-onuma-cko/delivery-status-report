@@ -9,7 +9,9 @@ Steps
      (--source file --input PATH) or the bundled sample data (--source sample).
   2. Build the report with delivery_status_report.build_report().
   3. Write reports/<YYYY-MM-DD>/delivery-status-report.{html,md}, summary.json
-     and input.json, plus reports/latest.{html,md}.
+     and input.json, plus reports/latest.{html,md} and reports/latest_input.json.
+     The next run compares its items with latest_input.json to grey out the
+     ones whose delivery comment and RAG did not change.
   4. --email   Send the report over SMTP (settings from environment variables).
   5. --commit  Commit the report files and push them to the configured branch.
 
@@ -29,7 +31,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from local_env import load_dotenv                  # noqa: E402
-from delivery_status_report import build_report    # noqa: E402
+from delivery_status_report import build_report, UNCHANGED_AFTER_DAYS    # noqa: E402
 import fetch_jira_items                            # noqa: E402
 import send_report_email                           # noqa: E402
 
@@ -121,6 +123,9 @@ def parse_args(argv):
     parser.add_argument("--config", default=str(HERE / "report_config.json"))
     parser.add_argument("--out", default=str(HERE / "reports"), help="reports directory (default: reports/)")
     parser.add_argument("--title", help="override the document title")
+    parser.add_argument("--previous", help="previous report's input.json used to detect unchanged items "
+                                           "(default: <out>/latest_input.json)")
+    parser.add_argument("--no-previous", action="store_true", help="do not compare with the previous report")
     parser.add_argument("--email", action="store_true", help="email the report over SMTP")
     parser.add_argument("--commit", action="store_true", help="commit the report files and push them")
     parser.add_argument("--branch", help="git branch for --commit (default: REPORT_GIT_BRANCH, then git.branch in config)")
@@ -153,23 +158,7 @@ def main(argv=None):
         log("STATUS: FAILED (no items)")
         return 1
 
-    # 2. build -----------------------------------------------------------------
-    log("[2/5] Building the report ...")
-    payload = {key: data.get(key) for key in INPUT_KEYS}
-    report_cfg = config.get("report") or {}
-    if report_cfg.get("link_items_to_jira", True) and data.get("urls"):
-        payload["urls"] = data["urls"]
-    title = args.title or report_cfg.get("title") or ""
-    if title:
-        payload["title"] = title
-    output = build_report(payload)
-    log(f"      {output['title']}: {output['item_count']} items, {output['initiative_count']} initiatives, "
-        f"{output['product_group_count']} product groups")
-    log(f"      RAG: {output['rag_summary']}")
-    if output["warnings"]:
-        log(f"      Warnings: {output['warnings']}")
-
-    # 3. branch (before files are written), then files -------------------------
+    # 2. branch first (so last week's files are in the working tree), then build --
     branch = args.branch or os.environ.get("REPORT_GIT_BRANCH") or (config.get("git") or {}).get("branch") or DEFAULT_BRANCH
     branch_ready = False
     if args.commit:
@@ -179,9 +168,45 @@ def main(argv=None):
         except Exception as err:  # noqa: BLE001
             failures.append(f"git branch: {err}")
             log(f"ERROR: could not prepare branch {branch}: {err}")
-
-    log("[3/5] Writing report files ...")
     out_root = Path(args.out)
+
+    log("[2/5] Building the report ...")
+    payload = {key: data.get(key) for key in INPUT_KEYS}
+    for key in ("keys", "urls", "updated", "as_of"):
+        if data.get(key):
+            payload[key] = data[key]
+    report_cfg = config.get("report") or {}
+    payload["link_items"] = report_cfg.get("link_items_to_jira", True)
+    title = args.title or report_cfg.get("title") or ""
+    if title:
+        payload["title"] = title
+
+    fallback = f"items not updated for {UNCHANGED_AFTER_DAYS}+ days count as unchanged"
+    previous_path = Path(args.previous) if args.previous else out_root / "latest_input.json"
+    if args.no_previous or (args.source == "sample" and not args.previous):
+        log(f"      change detection: no comparison with a previous report ({fallback})")
+    elif previous_path.exists():
+        try:
+            payload["previous"] = json.loads(previous_path.read_text(encoding="utf-8"))
+            previous_date = (payload["previous"].get("meta") or {}).get("report_date") or "date unknown"
+            log(f"      change detection: comparing with {display_path(previous_path)} ({previous_date})")
+        except (ValueError, AttributeError) as err:
+            payload.pop("previous", None)
+            log(f"      WARNING: could not read {display_path(previous_path)} ({err}); {fallback}")
+    else:
+        log(f"      change detection: {display_path(previous_path)} not found; {fallback}")
+
+    output = build_report(payload)
+    log(f"      {output['title']}: {output['item_count']} items, {output['initiative_count']} initiatives, "
+        f"{output['product_group_count']} product groups")
+    log(f"      RAG: {output['rag_summary']}")
+    if output.get("changes_summary"):
+        log(f"      Changes: {output['changes_summary']}")
+    if output["warnings"]:
+        log(f"      Warnings: {output['warnings']}")
+
+    # 3. files -----------------------------------------------------------------
+    log("[3/5] Writing report files ...")
     out_dir = out_root / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
     html_document = send_report_email.wrap_html_document(output["title"], output["report_html"])
@@ -192,6 +217,7 @@ def main(argv=None):
     input_path = out_dir / "input.json"
     latest_html = out_root / "latest.html"
     latest_md = out_root / "latest.md"
+    latest_input = out_root / "latest_input.json"
 
     html_path.write_text(html_document, encoding="utf-8")
     md_path.write_text(output["report_markdown"], encoding="utf-8")
@@ -203,13 +229,21 @@ def main(argv=None):
         "initiative_count": output["initiative_count"],
         "product_group_count": output["product_group_count"],
         "rag_summary": output["rag_summary"],
+        "changes_summary": output.get("changes_summary", ""),
+        "new_count": output.get("new_count", 0),
+        "unchanged_count": output.get("unchanged_count", 0),
+        "stale_count": output.get("stale_count", 0),
+        "compared_with": output.get("compared_with", ""),
         "warnings": output["warnings"],
     }
+    if isinstance(data, dict):
+        data.setdefault("meta", {})["report_date"] = stamp        # lets next week's run name this report
     summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     input_path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     shutil.copyfile(html_path, latest_html)
     shutil.copyfile(md_path, latest_md)
-    written = [html_path, md_path, summary_path, input_path, latest_html, latest_md]
+    shutil.copyfile(input_path, latest_input)
+    written = [html_path, md_path, summary_path, input_path, latest_html, latest_md, latest_input]
     for path in written:
         log(f"      wrote {display_path(path)}")
 
