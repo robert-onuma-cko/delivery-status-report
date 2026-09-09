@@ -77,14 +77,18 @@ python send_report_email.py --html reports/latest.html --markdown reports/latest
 The routine is a scheduled Claude Code cloud agent (see `ROUTINE_PROMPT.md`). It clones this repo into a
 sandbox, runs the one command above, and reports the `STATUS` line. For it to work:
 
-1. **Environment variables** – add every variable from `.env.example` to the Claude Code environment the
+1. **Repository access** – the Claude GitHub App must be allowed to see this repo: open
+   <https://github.com/settings/installations>, choose *Claude* → *Configure* → *Repository access* and add
+   `delivery-status-report` (or pick the repo from the repository list at <https://claude.ai/code>). Until then,
+   creating the routine fails with "You don't have access to a repository this routine uses".
+2. **Environment variables** – add every variable from `.env.example` to the Claude Code environment the
    routine uses (claude.ai/code → Environments). Secrets never go in the repo.
-2. **Network access** – the environment must be allowed to reach `checkout.atlassian.net` and your SMTP
+3. **Network access** – the environment must be allowed to reach `checkout.atlassian.net` and your SMTP
    host. If the run fails with "Could not reach", widen the environment's network settings.
-3. **Branch** – reports are committed to `claude/weekly-reports` (branches prefixed `claude/` are the ones
+4. **Branch** – reports are committed to `claude/weekly-reports` (branches prefixed `claude/` are the ones
    cloud sessions may push to). Change it via `git.branch` in `report_config.json` or `REPORT_GIT_BRANCH`.
    Each week adds `reports/<date>/` and refreshes `reports/latest.*`, so the branch is the archive.
-4. Manage or run the routine at <https://claude.ai/code/routines>.
+5. Manage or run the routine at <https://claude.ai/code/routines>.
 
 ## Zapier step (unchanged)
 

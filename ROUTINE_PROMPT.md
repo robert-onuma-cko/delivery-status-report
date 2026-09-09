@@ -12,6 +12,15 @@ Keep it in sync with the routine at https://claude.ai/code/routines if you chang
 | Environment variables needed | `JIRA_EMAIL`, `JIRA_API_TOKEN`, `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM`, `REPORT_EMAIL_TO` |
 | Network access | the Jira host and the SMTP host must be reachable from the environment |
 
+## Setup checklist
+
+1. Grant the Claude GitHub App access to this repository (GitHub → Settings → Applications → Claude → Configure).
+2. Create the routine with the settings above, disabled.
+3. Add the environment variables from `.env.example` to the Claude Code environment the routine uses.
+4. Allow network access from that environment to `checkout.atlassian.net` and the SMTP host.
+5. Replace every `CHANGE_ME` in `report_config.json` and check locally with `python fetch_jira_items.py --print`.
+6. Run the routine once from <https://claude.ai/code/routines>, read the `STATUS` line, then enable it.
+
 ---
 
 You are the weekly Delivery Status Report job. The repository is already checked out in your working directory; do not clone anything.
