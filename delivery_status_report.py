@@ -112,12 +112,19 @@ UNKNOWN_RAG_KEY = "unknown"
 
 SORT_ITEMS_BY_RAG = True          # most urgent RAG first within each product group
 UNCHANGED_TO_BOTTOM = True        # items with no change since the last report are greyed out and listed last
+# RAGs that need attention. Unchanged items with one of these RAGs are NOT greyed out
+# or pushed down - they keep their place and get a red "No change" note instead.
+# The weights also order initiatives and product groups: highest urgency score first.
+URGENT_RAG_WEIGHTS = {"off_track": 2, "at_risk": 1}
+SORT_SECTIONS_BY_URGENCY = True   # order initiatives / product groups by their urgency score
+STALE_EXEMPT_RAGS = {"done", "dropped"}   # closed items never get the red "Last updated" warning
 REPEAT_MULTI_GROUP_ITEMS = True   # True = an item with two product groups is listed under both
 DEDUPE_EXACT_DUPLICATES = True    # drop rows that are identical in all five fields
 INCLUDE_OVERVIEW_TABLE = True     # RAG roll-up table by initiative at the top of the doc
 UNASSIGNED_LABEL = "Unassigned"
 NO_COMMENT_TEXT = "No update provided."
 UNCHANGED_TEXT = "No change since the last report"
+URGENCY_TEXT = "urgency score"    # shown next to each initiative when sections are ordered by urgency
 
 # Work item names link to Jira. Keys come from the 'keys' input or are read out of
 # the 'urls' input (REST API "self" links are never shown to readers).
@@ -151,6 +158,7 @@ UNCHANGED_LINK_STYLE = "color: #A0AEC0; text-decoration: none;"
 UNCHANGED_PILL_STYLE = "font-size: 12px; font-weight: bold; color: #A0AEC0; background-color: #F7FAFC;"
 UPDATED_STYLE = "color: #A0AEC0; font-size: 12px;"
 STALE_STYLE = "color: #C53030; font-size: 12px; font-weight: bold;"
+UNCHANGED_ALERT_STYLE = "color: #C53030; font-size: 12px; font-weight: bold;"   # unchanged AND urgent
 NEW_TAG_STYLE = "font-size: 11px; font-weight: bold; color: #2A4365; background-color: #BEE3F8;"
 CHANGES_STYLE = FONT + " color: #4A5568; font-size: 13px; margin-top: 4px; margin-bottom: 10px;"
 HR_STYLE = "border: 0; border-top: 1px solid #E2E8F0; margin-top: 22px; margin-bottom: 22px;"
@@ -253,6 +261,25 @@ def rag_rank(key):
 
 def rag_display_label(key):
     return RAG_STYLES[key]["label"] if key in RAG_STYLES else "Other"
+
+
+def is_urgent(rag_key):
+    return URGENT_RAG_WEIGHTS.get(rag_key, 0) > 0
+
+
+def urgency_score(items):
+    """Weighted count of urgent RAGs (default: Off track x2 + At risk x1)."""
+    return sum(URGENT_RAG_WEIGHTS.get(item["rag_key"], 0) for item in items)
+
+
+def is_greyed(item):
+    """Unchanged items are greyed out unless their RAG needs attention."""
+    return item.get("change") == "unchanged" and not is_urgent(item["rag_key"])
+
+
+def is_alert(item):
+    """Unchanged AND urgent: stays in place, gets a red 'No change' note."""
+    return item.get("change") == "unchanged" and is_urgent(item["rag_key"])
 
 
 def initiative_icon(name):
@@ -492,7 +519,7 @@ def mark_changes(items, previous, now):
         moment = item["updated"]
         if moment is not None:
             item["age_text"], item["age_days"] = friendly_age(moment, now)
-            item["stale"] = now - moment > stale_after
+            item["stale"] = now - moment > stale_after and item["rag_key"] not in STALE_EXEMPT_RAGS
         state = (item["comment"].lower(), item["rag_label"].lower())
         if previous:
             old = previous["by_key"].get(item["key"]) if item["key"] else None
@@ -508,10 +535,17 @@ def mark_changes(items, previous, now):
 
 
 def item_sort_key(item):
-    """Unchanged items last (greyed out), then most urgent RAG first, then input order."""
-    unchanged = 1 if UNCHANGED_TO_BOTTOM and item.get("change") == "unchanged" else 0
+    """Greyed-out (unchanged, not urgent) items last, then most urgent RAG first, then input order."""
+    greyed = 1 if UNCHANGED_TO_BOTTOM and is_greyed(item) else 0
     rag = rag_rank(item["rag_key"]) if SORT_ITEMS_BY_RAG else 0
-    return (unchanged, rag, item["order"])
+    return (greyed, rag, item["order"])
+
+
+def section_sort_key(bucket, tiebreak):
+    """Highest urgency score first, then most items, then the given tiebreak (configured order / A-Z)."""
+    if not SORT_SECTIONS_BY_URGENCY:
+        return tiebreak
+    return (-urgency_score(bucket), -len(bucket), tiebreak)
 
 
 def initiative_sort_key(name):
@@ -533,10 +567,17 @@ def group_items(items):
         for group in groups:
             tree.setdefault(item["initiative"], {}).setdefault(group, []).append(item)
 
+    def initiative_key(initiative):
+        members = {id(item): item for bucket in tree[initiative].values() for item in bucket}
+        return section_sort_key(list(members.values()), initiative_sort_key(initiative))
+
+    def group_key(initiative):
+        return lambda g: section_sort_key(tree[initiative][g], (g == UNASSIGNED_LABEL, g.lower()))
+
     ordered = OrderedDict()
-    for initiative in sorted(tree, key=initiative_sort_key):
+    for initiative in sorted(tree, key=initiative_key):
         ordered[initiative] = OrderedDict()
-        for group in sorted(tree[initiative], key=lambda g: (g == UNASSIGNED_LABEL, g.lower())):
+        for group in sorted(tree[initiative], key=group_key(initiative)):
             bucket = tree[initiative][group]
             if SORT_ITEMS_BY_RAG or UNCHANGED_TO_BOTTOM:
                 bucket = sorted(bucket, key=item_sort_key)
@@ -561,6 +602,9 @@ def compute_stats(items, tree):
         "has_dates": any(item.get("updated") for item in items),
         "unchanged_per_initiative": Counter(item["initiative"] for item in items if item.get("change") == "unchanged"),
         "stale_per_initiative": Counter(item["initiative"] for item in items if item.get("stale")),
+        "alert_count": sum(1 for item in items if is_alert(item)),          # unchanged but at risk / off track
+        "urgency_per_initiative": {name: urgency_score([i for i in items if i["initiative"] == name])
+                                   for name in per_initiative},
         "compared_with": "",       # label of the previous report, filled in by build_report()
     }
 
@@ -636,6 +680,9 @@ def initiative_meta(initiative, stats):
         text += f" · ⏸ {unchanged} unchanged"
     if stale:
         text += f" · ⚠ {stale} not updated for {STALE_AFTER_DAYS}+ days"
+    score = stats.get("urgency_per_initiative", {}).get(initiative, 0)
+    if SORT_SECTIONS_BY_URGENCY and score:
+        text += f" · 🔥 {URGENCY_TEXT} {score}"
     return text
 
 
@@ -647,7 +694,10 @@ def changes_text(stats):
         if stats["new_count"]:
             parts.append(f"🆕 {stats['new_count']} new")
         parts.append(f"✏️ {updated} updated")
-        parts.append(f"⏸ {stats['unchanged_count']} unchanged")
+        unchanged = f"⏸ {stats['unchanged_count']} unchanged"
+        if stats.get("alert_count"):
+            unchanged += f" ({stats['alert_count']} at risk or off track)"
+        parts.append(unchanged)
     if stats.get("has_dates"):
         parts.append(f"⚠ {stats['stale_count']} not updated for {STALE_AFTER_DAYS}+ days")
     if not parts:
@@ -671,7 +721,8 @@ def extra_columns(stats):
 
 
 def item_html(item, current_group):
-    unchanged = item.get("change") == "unchanged"
+    unchanged = is_greyed(item)          # greyed out: unchanged and not urgent
+    alert = is_alert(item)               # unchanged but at risk / off track: red note, no greying
     pill = pill_html(item["rag_key"], item["rag_label"], muted=unchanged)
 
     name_html = rich_html(item["name"])
@@ -698,7 +749,9 @@ def item_html(item, current_group):
         comment_html = f'<span style="{MUTED_STYLE}">{esc(NO_COMMENT_TEXT)}</span>'
 
     notes = [updated_html(item)]
-    if unchanged:
+    if alert:
+        notes.append(f'<span style="{UNCHANGED_ALERT_STYLE}">⚠ {esc(UNCHANGED_TEXT)}</span>')
+    elif unchanged:
         notes.append(f'<span style="{UPDATED_STYLE}">{esc(UNCHANGED_TEXT)}</span>')
     notes = [note for note in notes if note]
     separator = f' <span style="{UPDATED_STYLE}">·</span> '
@@ -747,8 +800,19 @@ def overview_table_html(tree, stats):
             "<tbody>" + "".join(rows) + "</tbody></table>")
 
 
+def weights_text():
+    """e.g. 'Off track counts 2, At risk / Spillover counts 1'"""
+    parts = []
+    for key, weight in sorted(URGENT_RAG_WEIGHTS.items(), key=lambda kv: -kv[1]):
+        parts.append(f"{rag_display_label(key)} counts {weight}")
+    return ", ".join(parts)
+
+
 def footer_text(stats):
     notes = []
+    if SORT_SECTIONS_BY_URGENCY and URGENT_RAG_WEIGHTS:
+        notes.append("Strategic initiatives and product groups are ordered by urgency score "
+                     f"({weights_text()}), then by number of items.")
     if SORT_ITEMS_BY_RAG:
         notes.append("Within each product group, items are sorted by RAG status with the most urgent first.")
     if stats.get("tracking") and UNCHANGED_TO_BOTTOM:
@@ -757,9 +821,10 @@ def footer_text(stats):
         else:
             basis = f"not updated in Jira for {UNCHANGED_AFTER_DAYS} days or more"
         notes.append("Greyed-out items at the end of each group have no change to their delivery comment "
-                     f"or RAG ({basis}).")
+                     f"or RAG ({basis}); unchanged items that are at risk or off track keep their place "
+                     "and carry a red note instead.")
     if stats.get("has_dates"):
-        notes.append(f"Dates in red mark items not updated for more than {STALE_AFTER_DAYS} days.")
+        notes.append(f"Dates in red mark open items not updated for more than {STALE_AFTER_DAYS} days.")
     notes.append("Generated automatically from Jira.")
     return " ".join(notes)
 
@@ -827,10 +892,12 @@ def item_md(item, current_group):
     if item.get("updated"):
         text = updated_text(item)
         notes.append(f"**⚠ {text}**" if item.get("stale") else text)
-    if item.get("change") == "unchanged":
+    if is_alert(item):
+        notes.append(f"**⚠ {UNCHANGED_TEXT}**")
+    elif is_greyed(item):
         notes.append(UNCHANGED_TEXT)
     meta = " _(" + "; ".join(notes) + ")_" if notes else ""
-    prefix = "⏸ " if item.get("change") == "unchanged" else ""
+    prefix = "⏸ " if is_greyed(item) else ""
     return f"- {prefix}{style['emoji']} **{md_escape(item['rag_label'])}** · **{name}**{tag}{shared} — {comment}{meta}"
 
 

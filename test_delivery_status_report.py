@@ -97,51 +97,80 @@ def ago(days):
     return (as_of - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S.000+0000")
 
 
+GREY = "font-size: 14px; color: #A0AEC0;"      # style of a greyed-out row
+RED = "#C53030"
 current = {
-    "summary": ["Alpha", "Bravo", "Charlie", "Delta", "Echo"],
-    "strategic_initiatives": ["SSOT"] * 5,
-    "product_group": [["Ledger"]] * 5,
-    "delivery_comment": ["same as before", "changed text", "brand new", "same again", "no rag change"],
-    "delivery_rag": ["On track", "On track", "Off track", "Off track", "At risk"],
-    "keys": ["TST-1", "TST-2", "TST-3", "TST-4", "TST-5"],
-    "updated": [ago(22), ago(1), ago(0), ago(2), ago(16)],
+    "summary": ["Alpha", "Bravo", "Charlie", "Delta", "Echo", "Foxtrot"],
+    "strategic_initiatives": ["SSOT"] * 6,
+    "product_group": [["Ledger"]] * 6,
+    "delivery_comment": ["same as before", "changed text", "brand new", "same again", "no rag change", "shipped"],
+    "delivery_rag": ["On track", "On track", "Off track", "Off track", "At risk", "Done"],
+    "keys": ["TST-1", "TST-2", "TST-3", "TST-4", "TST-5", "TST-6"],
+    "updated": [ago(22), ago(1), ago(0), ago(2), ago(16), ago(30)],
     "as_of": as_of.isoformat(),
 }
 previous = {
-    "keys": ["TST-1", "TST-2", "TST-4", "TST-5"],
-    "summary": ["Alpha", "Bravo", "Delta", "Echo"],
-    "delivery_comment": ["same as before", "old text", "same again", "no rag change"],
-    "delivery_rag": ["On track", "On track", "Off track", "On track"],
+    "keys": ["TST-1", "TST-2", "TST-4", "TST-5", "TST-6"],
+    "summary": ["Alpha", "Bravo", "Delta", "Echo", "Foxtrot"],
+    "delivery_comment": ["same as before", "old text", "same again", "no rag change", "shipped"],
+    "delivery_rag": ["On track", "On track", "Off track", "On track", "Done"],
     "meta": {"report_date": "2026-09-02"},
 }
 report = build_report(dict(current, previous=json.dumps(previous)))     # previous as JSON text, like Zapier
-assert (report["new_count"], report["unchanged_count"], report["stale_count"]) == (1, 2, 2), report["changes_summary"]
+# Alpha, Delta and Foxtrot are unchanged; Delta is Off track so it counts as an alert.
+# Alpha (22 days) and Echo (16 days) are stale; Foxtrot (30 days) is Done, so it is not.
+assert (report["new_count"], report["unchanged_count"], report["stale_count"]) == (1, 3, 2), report["changes_summary"]
 assert report["compared_with"] == "2 Sep 2026"
 assert report["changes_summary"] == ("Since the previous report (2 Sep 2026): 🆕 1 new · ✏️ 2 updated · "
-                                     "⏸ 2 unchanged · ⚠ 2 not updated for 14+ days"), report["changes_summary"]
+                                     "⏸ 3 unchanged (1 at risk or off track) · ⚠ 2 not updated for 14+ days"), report["changes_summary"]
 
 md = report["report_markdown"]
-positions = [md.index(f"**[{name}]") for name in ("Charlie", "Echo", "Bravo", "Delta", "Alpha")]
-assert positions == sorted(positions), positions       # urgent RAG first, unchanged items last
+# urgent RAG first (unchanged Delta keeps its Off track place), greyed-out items last
+positions = [md.index(f"**[{name}]") for name in ("Charlie", "Delta", "Echo", "Bravo", "Alpha", "Foxtrot")]
+assert positions == sorted(positions), positions
 assert "⏸ 🟢 **On track** · **[Alpha]" in md and "**⚠ Last updated 3 weeks ago (18 Aug 2026)**" in md
+assert "- 🔴 **Off track** · **[Delta]" in md and "**⚠ No change since the last report**" in md
+assert "⏸ ✅ **Done** · **[Foxtrot]" in md and "_(Last updated 4 weeks ago (10 Aug 2026); No change" in md
 
 html_out = report["report_html"]
 rows = {key: chunk for chunk in html_out.split("<li ") for key in current["keys"] if f"browse/{key}" in chunk}
-assert len(rows) == 5
-assert "font-size: 14px; color: #A0AEC0;" in rows["TST-1"] and "No change since the last report" in rows["TST-1"]
-assert "#C53030" in rows["TST-1"] and "⚠ Last updated 3 weeks ago (18 Aug 2026)" in rows["TST-1"]     # red, stale
-assert "#C53030" in rows["TST-5"] and "Last updated 2 weeks ago" in rows["TST-5"]
-assert "font-size: 14px; color: #A0AEC0;" not in rows["TST-2"] and "Last updated yesterday" in rows["TST-2"]
+assert len(rows) == 6
+assert GREY in rows["TST-1"] and "No change since the last report" in rows["TST-1"]
+assert RED in rows["TST-1"] and "⚠ Last updated 3 weeks ago (18 Aug 2026)" in rows["TST-1"]     # red, stale
+assert RED in rows["TST-5"] and "Last updated 2 weeks ago" in rows["TST-5"]
+assert GREY not in rows["TST-2"] and "Last updated yesterday" in rows["TST-2"]
 assert "NEW" in rows["TST-3"] and "Last updated today" in rows["TST-3"]
 assert f'<a href="{BROWSE}TST-3" style="color: #2B6CB0; text-decoration: none;">' in rows["TST-3"]
+# Delta: unchanged but Off track -> not greyed, normal pill, red "No change" note
+assert GREY not in rows["TST-4"] and "#FED7D7" in rows["TST-4"]
+assert f'<span style="color: {RED}; font-size: 12px; font-weight: bold;">⚠ No change since the last report</span>' in rows["TST-4"]
+# Foxtrot: Done and 30 days old -> greyed, date NOT red
+assert GREY in rows["TST-6"] and "Last updated 4 weeks ago (10 Aug 2026)" in rows["TST-6"] and RED not in rows["TST-6"]
 assert "⏸ No change" in html_out and "⚠ 14+ days" in html_out                                   # overview columns
 assert "compared with the previous report of 2 Sep 2026" in html_out
+assert "keep their place and carry a red note" in html_out and "🔥 urgency score 5" in html_out   # 2x Off track + 1x At risk
 
 # without a previous snapshot the last-updated date decides: 7+ days = unchanged
 fallback = build_report(current)
-assert (fallback["new_count"], fallback["unchanged_count"], fallback["stale_count"]) == (0, 2, 2)
+assert (fallback["new_count"], fallback["unchanged_count"], fallback["stale_count"]) == (0, 3, 2)
 assert fallback["changes_summary"].startswith("Since last week:")
 assert "not updated in Jira for 7 days or more" in fallback["report_html"]
+
+# --- initiatives and product groups are ordered by urgency score ---------------
+weighted = build_report({
+    "summary": ["I1", "I2", "I3", "S1", "S2", "P1", "N1"],
+    "strategic_initiatives": ["Issuing", "Issuing", "Issuing", "SSOT", "SSOT", "Platforms", "Non-strategic"],
+    "product_group": [["Zeta"], ["Zeta"], ["Alpha"], ["Ledger"], ["Ledger"], ["Nexus"], ["Misc"]],
+    "delivery_comment": ["a", "b", "c", "d", "e", "f", "g"],
+    "delivery_rag": ["At risk", "At risk", "Off track", "Off track", "On track", "On track", "Off track"],
+})
+wmd = weighted["report_markdown"]
+# scores: Issuing 4, Non-strategic 2, SSOT 2, Platforms 0 -> ties (SSOT vs Non-strategic) by item count
+order = [wmd.index(f" {marker}\n_") for marker in ("Issuing", "SSOT", "Non-strategic", "Platforms")]
+assert order == sorted(order), order
+# within Issuing: Zeta (2 At risk = 2) ties with Alpha (1 Off track = 2) -> more items first
+assert wmd.index("### Zeta") < wmd.index("### Alpha")
+assert "🔥 urgency score 4" in wmd and "ordered by urgency score (Off track counts 2, At risk / Spillover counts 1)" in wmd
 
 # no dates and no snapshot: plain report, nothing greyed out, no links
 five = {key: current[key] for key in ("summary", "strategic_initiatives", "product_group", "delivery_comment", "delivery_rag")}
@@ -154,12 +183,12 @@ linked = build_report(dict(five, keys=current["keys"], urls=["undefined"] * 5))
 assert f'href="{BROWSE}TST-1"' in linked["report_html"]
 assert f"[Alpha]({BROWSE}TST-1)" in linked["report_markdown"]
 unlinked = build_report(dict(current, link_items="false"))
-assert "href=" not in unlinked["report_html"] and unlinked["unchanged_count"] == 2
+assert "href=" not in unlinked["report_html"] and unlinked["unchanged_count"] == 3
 
 # previous snapshot without keys is matched by item name
 by_name = build_report(dict(five, previous=json.dumps({"summary": ["Alpha"], "delivery_comment": ["same as before"],
                                                        "delivery_rag": ["On track"]})))
-assert by_name["unchanged_count"] == 1 and by_name["new_count"] == 4
+assert by_name["unchanged_count"] == 1 and by_name["new_count"] == 5
 
 # --- optional urls turn item names into links (Markdown escaping) -------------
 linked2 = build_report({

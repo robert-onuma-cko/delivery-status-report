@@ -67,7 +67,12 @@ is `false`.
 
 ## How items are ordered and highlighted
 
-Within each product group:
+**Sections.** Strategic initiatives, and the product groups inside each one, are ordered by urgency
+score: Off track counts 2, At risk / Spillover counts 1 (`URGENT_RAG_WEIGHTS`). Ties go to the section
+with more items, then to the configured `INITIATIVE_ORDER` / alphabetical order. Each initiative shows
+its score ("🔥 urgency score 5"). Set `SORT_SECTIONS_BY_URGENCY = False` to fall back to the fixed order.
+
+**Within each product group:**
 
 - **Most urgent first** – items are sorted by RAG: Off track, At risk / Spillover, On track, Planned,
   No RAG, Done, Dropped.
@@ -76,13 +81,17 @@ Within each product group:
   on the report branch and compares against it; items that were not in the previous report get a
   **NEW** tag. Without a snapshot (first run, or the Zapier path) an item counts as unchanged when
   Jira's `updated` stamp is 7 or more days old.
+- **Unchanged but At risk / Off track** – these are *not* greyed out or moved down. They keep their
+  urgent position and carry a red "⚠ No change since the last report" note; the header counts them
+  ("⏸ 12 unchanged (3 at risk or off track)").
 - **Last updated** – every item shows "Last updated 3 days ago (6 Sep 2026)". It turns red once the
-  item has not been updated for more than 14 days.
+  item has not been updated for more than 14 days, except for Done and Dropped items
+  (`STALE_EXEMPT_RAGS`), which are closed and never flagged.
 
-The header sums it up ("Since the previous report (2 Sep 2026): 🆕 3 new · ✏️ 20 updated · ⏸ 12 unchanged ·
-⚠ 6 not updated for 14+ days") and the overview table gains "No change" and "14+ days" columns. The
-thresholds are the `STALE_AFTER_DAYS` and `UNCHANGED_AFTER_DAYS` constants at the top of
-`delivery_status_report.py`; `--no-previous` skips the snapshot comparison for one run.
+The header sums it up ("Since the previous report (2 Sep 2026): 🆕 3 new · ✏️ 20 updated · ⏸ 12 unchanged
+(3 at risk or off track) · ⚠ 6 not updated for 14+ days") and the overview table gains "No change" and
+"14+ days" columns. The thresholds are the `STALE_AFTER_DAYS` and `UNCHANGED_AFTER_DAYS` constants at
+the top of `delivery_status_report.py`; `--no-previous` skips the snapshot comparison for one run.
 
 ## Configure email
 
