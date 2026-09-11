@@ -1,0 +1,15 @@
+{
+  "title": "Delivery Status Report – 11 September 2026",
+  "generated_at": "2026-09-11T08:08:55+00:00",
+  "source": "Jira (project = FININFRA AND cf[15909] = '26Q3' AND (cf[21716] IS EMPTY OR cf[21716] != 'Yes') ORDER BY created ASC)",
+  "item_count": 116,
+  "initiative_count": 11,
+  "product_group_count": 18,
+  "rag_summary": "🟠 At risk / Spillover 3 · 🟢 On track 52 · 🔵 Planned 35 · ⚫ No RAG 4 · ✅ Done 18 · ⚪ Dropped 4",
+  "changes_summary": "Since the previous report (9 Sep 2026): ✏️ 0 updated · ⏸ 116 unchanged (3 at risk or off track) · ⚠ 49 not updated for 14+ days",
+  "new_count": 0,
+  "unchanged_count": 116,
+  "stale_count": 49,
+  "compared_with": "9 Sep 2026",
+  "warnings": ""
+}
