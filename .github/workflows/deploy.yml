@@ -1,0 +1,84 @@
+name: deploy
+
+# Every push to main (the weekly report commit included) publishes the static
+# site to AI Sandbox. PRs only run the check job.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+concurrency:
+  group: deploy-${{ github.workflow }}-${{ github.ref }}
+  # Cancel superseded PR runs, but never a main run: it carries the deploy job
+  # and cancelling it mid-flight would skip the publish.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # Gate: the generator's tests pass and the site is a clean bundle of HTML
+  # with index.html at the root and relative links only.
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test the report generator
+        run: python test_delivery_status_report.py
+
+      - name: Assemble the static site
+        # Only the HTML goes to the host: index.html, archive.html and every
+        # dated report. The Python sources, JSON snapshots and Markdown stay out.
+        run: |
+          set -euo pipefail
+          test -f index.html || { echo "::error::index.html is missing at the repo root (run run_weekly_report.py)"; exit 1; }
+          mkdir -p _site
+          cp index.html archive.html _site/
+          for dir in reports/????-??-??; do
+            [ -f "$dir/delivery-status-report.html" ] || continue
+            mkdir -p "_site/$dir"
+            cp "$dir/delivery-status-report.html" "_site/$dir/"
+          done
+          if grep -rlE 'href="/|src="/' _site; then
+            echo "::error::absolute paths found; the host needs relative links"
+            exit 1
+          fi
+          echo "Site contents:"
+          find _site -type f | sort
+
+      - name: Upload site bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: _site
+          if-no-files-found: error
+
+  deploy:
+    needs: check
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download site bundle
+        uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: _site
+
+      - name: Deploy to AI Sandbox
+        uses: cko-core-platform/cko-ai-sandbox/.github/actions/deploy@main
+        with:
+          site: fi-delivery-report
+          env: prod
+          source-path: _site
