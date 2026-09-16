@@ -12,8 +12,12 @@ Steps
      and input.json, plus reports/latest.{html,md} and reports/latest_input.json.
      The next run compares its items with latest_input.json to grey out the
      ones whose delivery comment and RAG did not change.
+     Also refresh the static site: index.html (this report) and archive.html
+     (every dated report) at the repository root, and site.zip with the same
+     files for a manual upload to the static hosting platform.
   4. --email   Send the report over SMTP (settings from environment variables).
-  5. --commit  Commit the report files and push them to the configured branch.
+  5. --commit  Commit the report and site files and push them to the configured
+     branch (main by default, where the hosting integration deploys from).
 
 The last line printed is always "STATUS: OK" or "STATUS: FAILED (reasons)".
 Exit code 0 means every requested step succeeded.
@@ -24,6 +28,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,7 +41,9 @@ import fetch_jira_items                            # noqa: E402
 import send_report_email                           # noqa: E402
 
 INPUT_KEYS = ("summary", "strategic_initiatives", "product_group", "delivery_comment", "delivery_rag")
-DEFAULT_BRANCH = "claude/weekly-reports"
+DEFAULT_BRANCH = "main"
+REPORT_FILE = "delivery-status-report.html"
+SITE_FONT = "font-family: Arial, Helvetica, sans-serif;"
 
 
 def log(message):
@@ -69,6 +76,93 @@ def load_items(args, config):
         path = fetch_jira_items.DEFAULT_OUTPUT
     with path.open(encoding="utf-8") as handle:
         return json.load(handle), f"file {path}"
+
+
+# --- static site ---------------------------------------------------------------
+def escape_html(text):
+    return str(text).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def archive_entries(out_root):
+    """Every dated report under out_root (reports/<YYYY-MM-DD>/), newest first, with its summary."""
+    entries = []
+    for folder in sorted(Path(out_root).glob("????-??-??"), reverse=True):
+        if not (folder / REPORT_FILE).exists():
+            continue
+        summary = {}
+        summary_path = folder / "summary.json"
+        if summary_path.exists():
+            try:
+                summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            except ValueError:
+                summary = {}
+        entries.append({
+            "date": folder.name,
+            "href": f"{Path(out_root).name}/{folder.name}/{REPORT_FILE}",
+            "title": summary.get("title") or f"Delivery Status Report – {folder.name}",
+            "item_count": summary.get("item_count", ""),
+            "rag_summary": summary.get("rag_summary", ""),
+            "changes_summary": summary.get("changes_summary", ""),
+        })
+    return entries
+
+
+def site_nav_html(archive_href, latest_href=None):
+    """One-line navigation bar shown above the report / archive."""
+    links = [f'<a href="{archive_href}" style="color: #2B6CB0;">📚 All reports</a>']
+    if latest_href:
+        links.insert(0, f'<a href="{latest_href}" style="color: #2B6CB0;">📋 Latest report</a>')
+    return (f'<p style="{SITE_FONT} font-size: 13px; color: #718096; margin: 0 0 18px 0;">'
+            + " &nbsp;·&nbsp; ".join(links) + "</p>")
+
+
+def render_archive_html(entries):
+    cell = 'style="border: 1px solid #E2E8F0; padding: 6px 10px; vertical-align: top;"'
+    centred = 'style="border: 1px solid #E2E8F0; padding: 6px 10px; vertical-align: top; text-align: center;"'
+    head = 'style="border: 1px solid #E2E8F0; padding: 6px 10px; background-color: #F7FAFC; text-align: left;"'
+    rows = []
+    for entry in entries:
+        rows.append(
+            "<tr>"
+            f'<td {cell}><a href="{entry["href"]}" style="color: #2B6CB0; font-weight: bold; text-decoration: none;">'
+            f'{escape_html(entry["title"])}</a></td>'
+            f'<td {centred}>{escape_html(entry["item_count"])}</td>'
+            f'<td {cell}>{escape_html(entry["rag_summary"])}</td>'
+            f'<td {cell}>{escape_html(entry["changes_summary"])}</td>'
+            "</tr>"
+        )
+    if not rows:
+        rows.append(f'<tr><td {cell} colspan="4" style="color: #718096;">No reports yet.</td></tr>')
+    fragment = (
+        f'<div style="{SITE_FONT} color: #2D3748; line-height: 1.6;">\n'
+        + site_nav_html("archive.html", latest_href="index.html") + "\n"
+        f'<h1 style="{SITE_FONT} color: #1A202C; font-size: 26px; margin-bottom: 4px;">📚 Delivery Status Reports</h1>\n'
+        f'<p style="{SITE_FONT} color: #718096; font-size: 13px; margin-top: 0; margin-bottom: 14px;">'
+        f"{len(entries)} report{'s' if len(entries) != 1 else ''}, newest first</p>\n"
+        '<table style="border-collapse: collapse; font-size: 13px;"><thead><tr>'
+        f'<th {head}>Report</th><th {head}>Items</th><th {head}>RAG</th><th {head}>Changes</th>'
+        "</tr></thead><tbody>\n" + "\n".join(rows) + "\n</tbody></table>\n</div>"
+    )
+    return send_report_email.wrap_html_document("Delivery Status Reports", fragment)
+
+
+def write_site(site_root, out_root, title, report_html):
+    """Write index.html + archive.html into site_root and zip them with every dated report."""
+    site_root = Path(site_root)
+    index_path = site_root / "index.html"
+    archive_path = site_root / "archive.html"
+    zip_path = site_root / "site.zip"
+    entries = archive_entries(out_root)
+
+    index_path.write_text(send_report_email.wrap_html_document(title, site_nav_html("archive.html") + "\n" + report_html),
+                          encoding="utf-8")
+    archive_path.write_text(render_archive_html(entries), encoding="utf-8")
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as bundle:
+        bundle.write(index_path, "index.html")
+        bundle.write(archive_path, "archive.html")
+        for entry in entries:
+            bundle.write(site_root / entry["href"], entry["href"])
+    return [index_path, archive_path], zip_path
 
 
 # --- git helpers ---------------------------------------------------------------
@@ -121,7 +215,8 @@ def parse_args(argv):
     parser.add_argument("--input", help="JSON file to read for --source file (default: data/latest_input.json)")
     parser.add_argument("--jql", help="override jira.jql from report_config.json for this run")
     parser.add_argument("--config", default=str(HERE / "report_config.json"))
-    parser.add_argument("--out", default=str(HERE / "reports"), help="reports directory (default: reports/)")
+    parser.add_argument("--out", default=str(HERE / "reports"),
+                        help="reports directory (default: reports/); index.html, archive.html and site.zip go next to it")
     parser.add_argument("--title", help="override the document title")
     parser.add_argument("--previous", help="previous report's input.json used to detect unchanged items "
                                            "(default: <out>/latest_input.json)")
@@ -244,8 +339,12 @@ def main(argv=None):
     shutil.copyfile(md_path, latest_md)
     shutil.copyfile(input_path, latest_input)
     written = [html_path, md_path, summary_path, input_path, latest_html, latest_md, latest_input]
+    # static site: index.html / archive.html next to the reports folder, plus a zip for manual uploads
+    site_files, zip_path = write_site(out_root.parent, out_root, output["title"], output["report_html"])
+    written += site_files
     for path in written:
         log(f"      wrote {display_path(path)}")
+    log(f"      wrote {display_path(zip_path)} (not committed; upload it by hand if the hosting integration is not wired up)")
 
     # 4. email -----------------------------------------------------------------
     if args.email:

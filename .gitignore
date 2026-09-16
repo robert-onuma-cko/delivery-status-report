@@ -4,6 +4,9 @@
 # local data snapshots (reports/ is tracked on purpose)
 data/
 
+# static-site bundle for manual uploads; index.html/archive.html are tracked, the zip is rebuilt every run
+site.zip
+
 # python
 __pycache__/
 *.pyc

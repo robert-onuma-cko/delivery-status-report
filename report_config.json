@@ -1,12 +1,12 @@
 {
   "jira": {
     "base_url": "https://checkout.atlassian.net",
-    "jql": "project = CHANGE_ME AND statusCategory != Done ORDER BY created ASC",
+    "jql": "project = FININFRA AND cf[15909] = '26Q3' AND (cf[21716] IS EMPTY OR cf[21716] != 'Yes') ORDER BY created ASC",
     "page_size": 100,
     "fields": {
       "summary": "summary",
-      "strategic_initiative": "customfield_CHANGE_ME",
-      "product_group": "customfield_CHANGE_ME",
+      "strategic_initiative": "customfield_32162",
+      "product_group": "customfield_16066",
       "delivery_comment": "customfield_15976",
       "delivery_rag": "customfield_15930",
       "updated": "updated"
@@ -22,6 +22,6 @@
     "cc": []
   },
   "git": {
-    "branch": "claude/weekly-reports"
+    "branch": "main"
   }
 }

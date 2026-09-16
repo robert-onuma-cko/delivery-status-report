@@ -8,7 +8,7 @@ Two ways to run it:
 | Path | What runs | Output |
 |---|---|---|
 | **Zapier** | `delivery_status_report.py` pasted into a *Code by Zapier (Python)* step | `report_html` mapped into a Google Doc |
-| **Weekly cloud routine** | `python run_weekly_report.py --source jira --email --commit` on a Claude Code routine (Haiku) | Email + `reports/` folder on the `claude/weekly-reports` branch |
+| **Weekly job** | `python run_weekly_report.py --source jira --commit` on a schedule (local scheduled task or Claude Code routine) | `reports/` folder + static site (`index.html`, `archive.html`) committed to `main`, which the hosting integration deploys |
 
 Everything is standard-library Python 3.8+; nothing to install.
 
@@ -17,7 +17,8 @@ Everything is standard-library Python 3.8+; nothing to install.
 | File | Purpose |
 |---|---|
 | `delivery_status_report.py` | The report generator. Zapier step and importable module (`build_report`). |
-| `run_weekly_report.py` | One command: fetch → build → write files → email → commit/push. Prints `STATUS: OK` or `STATUS: FAILED (...)` last. |
+| `run_weekly_report.py` | One command: fetch → build → write files + static site → email → commit/push. Prints `STATUS: OK` or `STATUS: FAILED (...)` last. |
+| `index.html`, `archive.html` | The static site: latest report and the list of every dated report. Regenerated each run; never edit by hand. |
 | `fetch_jira_items.py` | Pulls the work items from Jira via REST (JQL + custom fields). Also `--list-fields` to look up field ids. |
 | `send_report_email.py` | Sends the report over SMTP (HTML body, Markdown text alternative, both attached). |
 | `local_env.py` | Loads `.env` for local runs. |
@@ -34,8 +35,22 @@ python run_weekly_report.py --source sample
 
 That writes `reports/<today>/delivery-status-report.html` (open it in a browser), the Markdown twin,
 `summary.json`, `input.json`, and refreshes `reports/latest.*` plus `reports/latest_input.json` (the
-snapshot the next run compares against; sample runs skip that comparison). Add `--email` once `.env` has
-SMTP settings, and `--commit` to push the files to git.
+snapshot the next run compares against; sample runs skip that comparison). It also rebuilds the static
+site – `index.html` (the report), `archive.html` (every dated report) and `site.zip` – see below. Add
+`--email` once `.env` has SMTP settings, and `--commit` to push the files to git. Pass `--out some/dir/reports`
+to keep an experiment out of the repo (the site files go next to the chosen reports folder).
+
+## The static site
+
+The hosting platform serves a zip of plain HTML from S3 – no build step, `index.html` at the root, relative
+links only. The report already satisfies that (inline CSS, no local assets, only absolute links are the Jira
+ones), so the repository root *is* the site:
+
+- `index.html` – the latest report with a "📚 All reports" link on top.
+- `archive.html` – one row per `reports/<date>/` (title, item count, RAG line, changes line), newest first,
+  linking to `reports/<date>/delivery-status-report.html`.
+- `site.zip` – the same files plus every dated report, for a manual upload. It is git-ignored; the CI
+  integration on the GitHub repo deploys whatever is on `main`, so pushing is enough.
 
 Run the Zapier-path tests with `python test_delivery_status_report.py`.
 
@@ -117,10 +132,11 @@ sandbox, runs the one command above, and reports the `STATUS` line. For it to wo
    routine uses (claude.ai/code → Environments). Secrets never go in the repo.
 3. **Network access** – the environment must be allowed to reach `checkout.atlassian.net` and your SMTP
    host. If the run fails with "Could not reach", widen the environment's network settings.
-4. **Branch** – reports are committed to `claude/weekly-reports` (branches prefixed `claude/` are the ones
-   cloud sessions may push to). Change it via `git.branch` in `report_config.json` or `REPORT_GIT_BRANCH`.
-   Each week adds `reports/<date>/` and refreshes `reports/latest.*` and `reports/latest_input.json`
-   (the snapshot the next run compares against), so the branch is the archive.
+4. **Branch** – reports and the site are committed to `main` so the hosting integration deploys them.
+   Change it via `git.branch` in `report_config.json` or `REPORT_GIT_BRANCH` (a Claude cloud routine may
+   only push to `claude/*` branches; the first two reports live on `claude/weekly-reports`, now merged).
+   Each week adds `reports/<date>/` and refreshes `reports/latest.*`, `reports/latest_input.json`
+   (the snapshot the next run compares against), `index.html` and `archive.html`.
 5. Manage or run the routine at <https://claude.ai/code/routines>.
 
 ## Zapier step (unchanged)
