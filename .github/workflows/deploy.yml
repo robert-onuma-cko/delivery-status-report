@@ -1,13 +1,23 @@
 name: deploy
 
-# Every push to main (the weekly report commit included) publishes the static
-# site to AI Sandbox. PRs only run the check job.
+# Publishes the static site to AI Sandbox (codename Arrakis) from
+# cko-vibe-tech/fi-delivery-status-report. Three ways in:
+#   - every push to main (the weekly report commit included)
+#   - a weekly schedule, Friday 07:00 UTC (08:00 London in summer, 07:00 in
+#     winter) so the site is refreshed on Friday morning even if nothing was
+#     pushed since the last run
+#   - manual "Run workflow" from the Actions tab
+# PRs only run the check job. The platform's OIDC trust only accepts tokens
+# from main, so scheduled and manual runs must stay on main.
 
 on:
   pull_request:
   push:
     branches:
       - main
+  schedule:
+    - cron: "0 7 * * 5"
+  workflow_dispatch:
 
 concurrency:
   group: deploy-${{ github.workflow }}-${{ github.ref }}
@@ -61,7 +71,8 @@ jobs:
 
   deploy:
     needs: check
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Deploy on push, schedule and manual dispatch, but only ever from main.
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       id-token: write
